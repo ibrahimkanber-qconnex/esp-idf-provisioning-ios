@@ -166,7 +166,8 @@ open class ESPDevice {
     /// - Parameters:
     ///   - delegate: Class conforming to `ESPDeviceConnectionDelegate` protocol.
     ///   - completionHandler: The completion handler returns status of connection with the device.
-    open func connect(delegate: ESPDeviceConnectionDelegate? = nil, completionHandler: @escaping (ESPSessionStatus) -> Void) {
+    ///   - useSSIDPrefix: If true, connects using SSID prefix instead of exact SSID match. Default is false.
+    open func connect(delegate: ESPDeviceConnectionDelegate? = nil, completionHandler: @escaping (ESPSessionStatus) -> Void, useSSIDPrefix: Bool = false) {
         ESPLog.log("Connecting ESPDevice...")
         self.delegate = delegate
         switch transport {
@@ -182,7 +183,11 @@ open class ESPDevice {
                 if espSoftApTransport == nil {
                     espSoftApTransport = ESPSoftAPTransport(baseUrl: ESPUtility.baseUrl)
                 }
-                self.connectToSoftApUsingCredentials(ssid: name, completionHandler: completionHandler)
+                if useSSIDPrefix {
+                    self.connectToSoftApPrefixUsingCredentials(ssidPrefix: name, completionHandler: completionHandler)
+                } else {
+                    self.connectToSoftApUsingCredentials(ssid: name, completionHandler: completionHandler)
+                }
         }
     }
     
@@ -202,6 +207,44 @@ open class ESPDevice {
                 hotSpotConfig = NEHotspotConfiguration(ssid: ssid)
             } else {
                 hotSpotConfig = NEHotspotConfiguration(ssid: ssid, passphrase: softAPPassword!, isWEP: false)
+            }
+            hotSpotConfig.joinOnce = false
+            ESPLog.log("Applying Hotspot configuration")
+            NEHotspotConfigurationManager.shared.apply(hotSpotConfig) { error in
+                if error != nil {
+                    if error?.localizedDescription == "already associated." {
+                        ESPLog.log("SoftAp is already connected.")
+                        self.getDeviceVersionInfo(completionHandler: completionHandler)
+                        return
+                    }
+                    ESPLog.log("Failed to connect")
+                    self.connectionStatus = .failedToConnect(.softAPConnectionFailure)
+                    completionHandler(self.connectionStatus)
+                }
+                ESPLog.log("Successfully conected to SoftAP.")
+                DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) {
+                    self.getDeviceVersionInfo(completionHandler: completionHandler)
+                }
+            }
+        }
+    }
+    
+    /// Connect to SoftAp device using SSID prefix. It is required before data can be transmitted from application to device.
+    ///
+    /// - Parameters:
+    ///   - ssidPrefix: SSID prefix of SoftAp.
+    ///   - completionHandler: The completion handler returns status of connection with the device.
+    private func connectToSoftApPrefixUsingCredentials(ssidPrefix: String, completionHandler: @escaping (ESPSessionStatus) -> Void) {
+        if verifyConnection(ssid: ssidPrefix) {
+            ESPLog.log("Successfully conected to SoftAP.")
+            self.getDeviceVersionInfo(completionHandler: completionHandler)
+        } else {
+            ESPLog.log("Connecting phone to ESPDevice SoftAp using prefix.")
+            var hotSpotConfig: NEHotspotConfiguration
+            if softAPPassword == nil || softAPPassword! == "" {
+                hotSpotConfig = NEHotspotConfiguration(ssidPrefix: ssidPrefix)
+            } else {
+                hotSpotConfig = NEHotspotConfiguration(ssidPrefix: ssidPrefix, passphrase: softAPPassword!, isWEP: false)
             }
             hotSpotConfig.joinOnce = false
             ESPLog.log("Applying Hotspot configuration")
